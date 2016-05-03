@@ -157,7 +157,7 @@ const KeyNameMapEntry kKeyNameMap[] = {
 	{ "WWWRefresh",		kKeyWWWRefresh },
 	{ "WWWSearch",		kKeyWWWSearch },
 	{ "WWWStop",		kKeyWWWStop },
-	{ "Zenkaku",		kKeyZenkaku },
+	{ "Hanja",			kKeyHanja },
 	{ "Space",			0x0020 },
 	{ "Exclaim",		0x0021 },
 	{ "DoubleQuote",	0x0022 },
