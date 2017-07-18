@@ -1,6 +1,6 @@
 /*
  * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012 Synergy Si Ltd.
+ * Copyright (C) 2012-2016 Symless Ltd.
  * Copyright (C) 2002 Chris Schoeneman
  * 
  * This package is free software; you can redistribute it and/or
@@ -117,9 +117,11 @@ ArchDaemonUnix::daemonize(const char* name, DaemonFunc func)
 	open("/dev/null", O_RDWR);
 	
 	int dupErr = dup(1);
-	if (dupErr)
+
+	if (dupErr < 0) {
 		// NB: file logging actually isn't working at this point!
 		LOG((CLOG_ERR "dup error: %i", dupErr));
+	}
 	
 #ifdef __APPLE__
 	return execSelfNonDaemonized();

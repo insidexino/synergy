@@ -1,6 +1,6 @@
 /*
  * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012 Synergy Si Ltd.
+ * Copyright (C) 2012-2016 Symless Ltd.
  * Copyright (C) 2002 Chris Schoeneman
  * 
  * This package is free software; you can redistribute it and/or
@@ -215,7 +215,7 @@ private: // HACK
 	
 	// save last position of mouse to compute next delta movement
 	void saveMousePosition(SInt32 x, SInt32 y);
-	
+
 	// check if it is a modifier key repeating message
 	bool				isModifierRepeat(KeyModifierMask oldState, 
 							KeyModifierMask state, WPARAM wParam) const;

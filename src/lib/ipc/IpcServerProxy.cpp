@@ -1,6 +1,6 @@
 /*
  * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012 Synergy Si Ltd.
+ * Copyright (C) 2012-2016 Symless Ltd.
  * Copyright (C) 2012 Nick Bolton
  * 
  * This package is free software; you can redistribute it and/or
@@ -94,7 +94,7 @@ IpcServerProxy::send(const IpcMessage& message)
 
 	case kIpcCommand: {
 		const IpcCommandMessage& cm = static_cast<const IpcCommandMessage&>(message);
-		String command = cm.command();
+		const String command = cm.command();
 		ProtocolUtil::writef(&m_stream, kIpcMsgCommand, &command);
 		break;
 	}

@@ -1,6 +1,6 @@
 /*
  * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012 Synergy Si Ltd.
+ * Copyright (C) 2012-2016 Symless Ltd.
  * Copyright (C) 2004 Chris Schoeneman
  * 
  * This package is free software; you can redistribute it and/or
@@ -18,10 +18,12 @@
 
 #include "platform/OSXKeyState.h"
 #include "platform/OSXUchrKeyResource.h"
+#include "platform/OSXMediaKeySupport.h"
 #include "arch/Arch.h"
 #include "base/Log.h"
 
 #include <Carbon/Carbon.h>
+#include <IOKit/hidsystem/IOHIDLib.h>
 
 // Note that some virtual keys codes appear more than once.  The
 // first instance of a virtual key code maps to the KeyID that we
@@ -33,6 +35,11 @@ static const UInt32 s_altVK      = kVK_Option;
 static const UInt32 s_superVK    = kVK_Command;
 static const UInt32 s_capsLockVK = kVK_CapsLock;
 static const UInt32 s_numLockVK  = kVK_ANSI_KeypadClear; // 71
+
+static const UInt32 s_brightnessUp = 144;
+static const UInt32 s_brightnessDown = 145;
+static const UInt32 s_missionControlVK = 160;
+static const UInt32 s_launchpadVK = 131;
 
 static const UInt32 s_osxNumLock = 1 << 16;
 
@@ -110,7 +117,12 @@ static const KeyEntry	s_controlKeys[] = {
 
 	// toggle modifiers
 	{ kKeyNumLock,		s_numLockVK },
-	{ kKeyCapsLock,		s_capsLockVK }
+	{ kKeyCapsLock,		s_capsLockVK },
+	
+	{ kKeyMissionControl, s_missionControlVK },
+	{ kKeyLaunchpad, s_launchpadVK },
+	{ kKeyBrightnessUp,  s_brightnessUp },
+	{ kKeyBrightnessDown, s_brightnessDown }
 };
 
 
@@ -316,6 +328,12 @@ OSXKeyState::fakeCtrlAltDel()
 	return false;
 }
 
+bool
+OSXKeyState::fakeMediaKey(KeyID id)
+{
+	return fakeNativeMediaKey(id);;
+}
+
 CGEventFlags
 OSXKeyState::getModifierStateAsOSXFlags()
 {
@@ -379,15 +397,17 @@ OSXKeyState::pollActiveModifiers() const
 SInt32
 OSXKeyState::pollActiveGroup() const
 {
-	bool layoutValid = true;
 	TISInputSourceRef keyboardLayout = TISCopyCurrentKeyboardLayoutInputSource();
+	CFDataRef id = (CFDataRef)TISGetInputSourceProperty(
+						keyboardLayout, kTISPropertyInputSourceID);
 	
-	if (layoutValid) {
-		GroupMap::const_iterator i = m_groupMap.find(keyboardLayout);
-		if (i != m_groupMap.end()) {
-			return i->second;
-		}
+	GroupMap::const_iterator i = m_groupMap.find(id);
+	if (i != m_groupMap.end()) {
+		return i->second;
 	}
+	
+	LOG((CLOG_DEBUG "can't get the active group, use the first group instead"));
+
 	return 0;
 }
 
@@ -414,7 +434,9 @@ OSXKeyState::getKeyMap(synergy::KeyMap& keyMap)
 		m_groupMap.clear();
 		SInt32 numGroups = (SInt32)m_groups.size();
 		for (SInt32 g = 0; g < numGroups; ++g) {
-			m_groupMap[m_groups[g]] = g;
+			CFDataRef id = (CFDataRef)TISGetInputSourceProperty(
+								m_groups[g], kTISPropertyInputSourceID);
+			m_groupMap[id] = g;
 		}
 	}
 
@@ -448,6 +470,105 @@ OSXKeyState::getKeyMap(synergy::KeyMap& keyMap)
 	}
 }
 
+static io_connect_t getEventDriver(void)
+{
+	static mach_port_t sEventDrvrRef = 0;
+	mach_port_t masterPort, service, iter;
+	kern_return_t kr;
+	
+	if (!sEventDrvrRef) {
+		// Get master device port
+		kr = IOMasterPort(bootstrap_port, &masterPort);
+		assert(KERN_SUCCESS == kr);
+		
+		kr = IOServiceGetMatchingServices(masterPort,
+				IOServiceMatching(kIOHIDSystemClass), &iter);
+		assert(KERN_SUCCESS == kr);
+		
+		service = IOIteratorNext(iter);
+		assert(service);
+		
+		kr = IOServiceOpen(service, mach_task_self(),
+				kIOHIDParamConnectType, &sEventDrvrRef);
+		assert(KERN_SUCCESS == kr);
+
+		IOObjectRelease(service);
+		IOObjectRelease(iter);
+	}
+	
+	return sEventDrvrRef;
+}
+
+void
+OSXKeyState::postHIDVirtualKey(const UInt8 virtualKeyCode,
+				const bool postDown)
+{
+	static UInt32 modifiers = 0;
+	
+	NXEventData event;
+	IOGPoint loc = { 0, 0 };
+	UInt32 modifiersDelta = 0;
+
+	bzero(&event, sizeof(NXEventData));
+
+	switch (virtualKeyCode)
+	{
+	case s_shiftVK:
+	case s_superVK:
+	case s_altVK:
+	case s_controlVK:
+	case s_capsLockVK:
+		switch (virtualKeyCode)
+		{
+		case s_shiftVK:
+				modifiersDelta = NX_SHIFTMASK;
+				m_shiftPressed = postDown;
+				break;
+		case s_superVK:
+				modifiersDelta = NX_COMMANDMASK;
+				m_superPressed = postDown;
+				break;
+		case s_altVK:
+				modifiersDelta = NX_ALTERNATEMASK;
+				m_altPressed = postDown;
+				break;
+		case s_controlVK:
+				modifiersDelta = NX_CONTROLMASK;
+				m_controlPressed = postDown;
+				break;
+		case s_capsLockVK:
+				modifiersDelta = NX_ALPHASHIFTMASK;
+				m_capsPressed = postDown;
+				break;
+		}
+		
+		// update the modifier bit
+		if (postDown) {
+			modifiers |= modifiersDelta;
+		}
+		else {
+			modifiers &= ~modifiersDelta;
+		}
+			
+		kern_return_t kr;
+		kr = IOHIDPostEvent(getEventDriver(), NX_FLAGSCHANGED, loc,
+				&event, kNXEventDataVersion, modifiers, true);
+		assert(KERN_SUCCESS == kr);
+		break;
+
+	default:
+		event.key.repeat = false;
+		event.key.keyCode = virtualKeyCode;
+		event.key.origCharSet = event.key.charSet = NX_ASCIISET;
+		event.key.origCharCode = event.key.charCode = 0;
+		kr = IOHIDPostEvent(getEventDriver(),
+				postDown ? NX_KEYDOWN : NX_KEYUP,
+				loc, &event, kNXEventDataVersion, 0, false);
+		assert(KERN_SUCCESS == kr);
+		break;
+	}
+}
+
 void
 OSXKeyState::fakeKey(const Keystroke& keystroke)
 {
@@ -456,76 +577,14 @@ OSXKeyState::fakeKey(const Keystroke& keystroke)
 		
 		KeyButton button = keystroke.m_data.m_button.m_button;
 		bool keyDown = keystroke.m_data.m_button.m_press;
-		UInt32 client = keystroke.m_data.m_button.m_client;
-		CGEventSourceRef source = 0;
 		CGKeyCode virtualKey = mapKeyButtonToVirtualKey(button);
 		
 		LOG((CLOG_DEBUG1
-			"  button=0x%04x virtualKey=0x%04x keyDown=%s client=0x%04x",
-			button, virtualKey, keyDown ? "down" : "up", client));
+			"  button=0x%04x virtualKey=0x%04x keyDown=%s",
+			button, virtualKey, keyDown ? "down" : "up"));
 
-		CGEventRef ref = CGEventCreateKeyboardEvent(
-			source, virtualKey, keyDown);
-		
-		if (ref == NULL) {
-			LOG((CLOG_CRIT "unable to create keyboard event for keystroke"));
-			return;
-		}
+		postHIDVirtualKey(virtualKey, keyDown);
 
-		// persist modifier state.
-		if (virtualKey == s_shiftVK) {
-			m_shiftPressed = keyDown;
-		}
-		
-		if (virtualKey == s_controlVK) {
-			m_controlPressed = keyDown;
-		}
-		
-		if (virtualKey == s_altVK) {
-			m_altPressed = keyDown;
-		}
-		
-		if (virtualKey == s_superVK) {
-			m_superPressed = keyDown;
-		}
-		
-		if (virtualKey == s_capsLockVK) {
-			m_capsPressed = keyDown;
-		}
-
-		// set the event flags for special keys
-		// http://tinyurl.com/pxl742y
-		CGEventFlags modifiers = 0;
-		
-		if (m_shiftPressed) {
-			modifiers |= kCGEventFlagMaskShift;
-		}
-		
-		if (m_controlPressed) {
-			modifiers |= kCGEventFlagMaskControl;
-		}
-		
-		if (m_altPressed) {
-			modifiers |= kCGEventFlagMaskAlternate;
-		}
-		
-		if (m_superPressed) {
-			modifiers |= kCGEventFlagMaskCommand;
-		}
-		
-		if (m_capsPressed) {
-			modifiers |= kCGEventFlagMaskAlphaShift;
-		}
-		
-		CGEventSetFlags(ref, modifiers);
-		CGEventPost(kCGHIDEventTap, ref);
-		CFRelease(ref);
-
-		// add a delay if client data isn't zero
-		// FIXME -- why?
-		if (client != 0) {
-			ARCH->sleep(0.01);
-		}
 		break;
 	}
 
@@ -681,10 +740,10 @@ OSXKeyState::getKeyMap(synergy::KeyMap& keyMap,
 			}
 
 			// now add a key entry for each key/required modifier pair.
-			item.m_sensitive = mapModifiersFromOSX(sensitive << 8);
+			item.m_sensitive = mapModifiersFromOSX(sensitive << 16);
 			for (std::set<UInt32>::iterator k = required.begin();
 											k != required.end(); ++k) {
-				item.m_required = mapModifiersFromOSX(*k << 8);
+				item.m_required = mapModifiersFromOSX(*k << 16);
 				keyMap.addKeyEntry(item);
 			}
 		}

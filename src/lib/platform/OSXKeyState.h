@@ -1,6 +1,6 @@
 /*
  * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012 Synergy Si Ltd.
+ * Copyright (C) 2012-2016 Symless Ltd.
  * Copyright (C) 2004 Chris Schoeneman
  * 
  * This package is free software; you can redistribute it and/or
@@ -92,6 +92,7 @@ public:
 
 	// IKeyState overrides
 	virtual bool		fakeCtrlAltDel();
+	virtual bool		fakeMediaKey(KeyID id);
 	virtual KeyModifierMask
 						pollActiveModifiers() const;
 	virtual SInt32		pollActiveGroup() const;
@@ -148,6 +149,12 @@ private:
 	static UInt32		mapKeyButtonToVirtualKey(KeyButton keyButton);
 
 	void				init();
+	
+	// Post a key event to HID manager. It posts an event to HID client, a
+	// much lower level than window manager which's the target from carbon
+	// CGEventPost
+	void				postHIDVirtualKey(const UInt8 virtualKeyCode,
+							const bool postDown);
 
 private:
 	// OS X uses a physical key if 0 for the 'A' key.  synergy reserves
@@ -158,7 +165,7 @@ private:
 		KeyButtonOffset = 1
 	};
 
-	typedef std::map<KeyLayout, SInt32> GroupMap;
+	typedef std::map<CFDataRef, SInt32> GroupMap;
 	typedef std::map<UInt32, KeyID> VirtualKeyMap;
 
 	VirtualKeyMap		m_virtualKeyMap;

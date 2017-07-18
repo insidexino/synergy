@@ -1,5 +1,5 @@
 # synergy -- mouse and keyboard sharing utility
-# Copyright (C) 2012 Synergy Si Ltd.
+# Copyright (C) 2012-2016 Symless Ltd.
 # Copyright (C) 2009 Nick Bolton
 # 
 # This package is free software; you can redistribute it and/or
@@ -41,7 +41,7 @@ class Toolchain:
 	cmd_opt_dict = {
 		'about'     : ['', []],
 		'setup'     : ['g:', ['generator=']],
-		'configure' : ['g:dr', ['generator=', 'debug', 'release', 'mac-sdk=', 'mac-identity=']],
+		'configure' : ['g:dr', ['generator=', 'debug', 'release', 'mac-sdk=', 'mac-deploy=', 'mac-identity=']],
 		'build'     : ['dr', ['debug', 'release']],
 		'clean'     : ['dr', ['debug', 'release']],
 		'update'    : ['', []],
@@ -201,7 +201,7 @@ class InternalCommands:
 	
 	project = 'synergy'
 	setup_version = 5 # increment to force setup/config
-	website_url = 'http://synergy-project.org/'
+	website_url = 'http://symless.com/'
 
 	this_cmd = 'hm'
 	cmake_cmd = 'cmake'
@@ -244,6 +244,9 @@ class InternalCommands:
 	# by default, unknown
 	macSdk = None
 	
+	# by default, unknown
+	macDeploy = None
+
 	# by default, unknown
 	macIdentity = None
 	
@@ -306,7 +309,7 @@ class InternalCommands:
 			'  genlist     Shows the list of available platform generators\n'
 			'  usage       Shows the help screen\n'
 			'\n'
-			'Example: %s build -g 3'
+			'Example: %s conf -g 3'
 			) % (app, app)
 
 	def configureAll(self, targets, extraArgs=''):
@@ -365,7 +368,7 @@ class InternalCommands:
 		# ensure latest setup and do not ask config for generator (only fall 
 		# back to prompt if not specified as arg)
 		self.ensure_setup_latest()
-		
+
 		if sys.platform == "darwin":
 			config = self.getConfig()
 		
@@ -374,6 +377,11 @@ class InternalCommands:
 			elif config.has_option("hm", "macSdk"):
 				self.macSdk = config.get('hm', 'macSdk')
 		
+			if self.macDeploy:
+				config.set('hm', 'macDeploy', self.macDeploy)
+			elif config.has_option("hm", "macDeploy"):
+				self.macSdk = config.get('hm', 'macDeploy')
+
 			if self.macIdentity:
 				config.set('hm', 'macIdentity', self.macIdentity)
 			elif config.has_option("hm", "macIdentity"):
@@ -383,7 +391,10 @@ class InternalCommands:
 		
 			if not self.macSdk:
 				raise Exception("Arg missing: --mac-sdk <version>");
-				
+			
+			if not self.macDeploy:
+				self.macDeploy = self.macSdk
+
 			if not self.macIdentity:
 				raise Exception("Arg missing: --mac-identity <name>");
 			
@@ -430,14 +441,16 @@ class InternalCommands:
 		if generator.cmakeName.find('Unix Makefiles') != -1:
 			cmake_args += ' -DCMAKE_BUILD_TYPE=' + target.capitalize()
 			
-		elif sys.platform == "darwin":
+		if sys.platform == "darwin":
 			macSdkMatch = re.match("(\d+)\.(\d+)", self.macSdk)
 			if not macSdkMatch:
 				raise Exception("unknown osx version: " + self.macSdk)
 
-			sdkDir = self.getMacSdkDir()
-			cmake_args += " -DCMAKE_OSX_SYSROOT=" + sdkDir
-			cmake_args += " -DCMAKE_OSX_DEPLOYMENT_TARGET=" + self.macSdk
+			if generator.cmakeName.find('Unix Makefiles') == -1:
+				sdkDir = self.getMacSdkDir()
+				cmake_args += " -DCMAKE_OSX_SYSROOT=" + sdkDir
+				cmake_args += " -DCMAKE_OSX_DEPLOYMENT_TARGET=" + self.macDeploy
+
 			cmake_args += " -DOSX_TARGET_MAJOR=" + macSdkMatch.group(1)
 			cmake_args += " -DOSX_TARGET_MINOR=" + macSdkMatch.group(2)
 		
@@ -496,8 +509,8 @@ class InternalCommands:
 			sdkDir = self.getMacSdkDir()
 			shortForm = "macosx" + self.macSdk
 			version = str(major) + "." + str(minor)
-			
-			qmake_cmd_string += " QMAKE_MACOSX_DEPLOYMENT_TARGET=" + version
+
+			qmake_cmd_string += " QMAKE_MACOSX_DEPLOYMENT_TARGET=" + self.macDeploy
 
 			(qMajor, qMinor, qRev) = self.getQmakeVersion()
 			if qMajor <= 4:
@@ -551,6 +564,7 @@ class InternalCommands:
 		if os.path.exists(sdkPath):
 			return sdkPath
 
+		# return os.popen('xcodebuild -version -sdk macosx' + self.macSdk + ' Path').read().strip()
 		return "/Developer/SDKs/" + sdkDirName + ".sdk"
 	
 	# http://tinyurl.com/cs2rxxb
@@ -653,6 +667,9 @@ class InternalCommands:
 		
 		if config.has_option("hm", "macSdk"):
 			self.macSdk = config.get("hm", "macSdk")
+
+		if config.has_option("hm", "macDeploy"):
+			self.macDeploy = config.get("hm", "macDeploy")
 		
 		if config.has_option("hm", "macIdentity"):
 			self.macIdentity = config.get("hm", "macIdentity")
@@ -740,16 +757,6 @@ class InternalCommands:
 			shutil.copy(targetDir + "/synergyc", bundleBinDir)
 			shutil.copy(targetDir + "/synergys", bundleBinDir)
 			shutil.copy(targetDir + "/syntool", bundleBinDir)
-
-			# Copy all generated plugins to the package
-			bundlePluginDir = bundleBinDir + "plugins"
-			pluginDir = targetDir + "/plugins"
-			print "Copying plugins dirtree: " + pluginDir
-			if os.path.isdir(pluginDir):
-				print "Copying to: " + bundlePluginDir
-				shutil.copytree(pluginDir, bundlePluginDir)
-			else:
-				print "pluginDir doesn't exist, skipping"
 
 		self.loadConfig()
 		if not self.macIdentity:
@@ -1151,14 +1158,12 @@ class InternalCommands:
 		controlFile.close()
 
 		targetBin = '%s/%s/usr/bin' % (debDir, package)
-		targetPlugin = '%s/%s/usr/lib/synergy/plugins' % (debDir, package)
 		targetShare = '%s/%s/usr/share' % (debDir, package)
 		targetApplications = "%s/applications" % targetShare
 		targetIcons = "%s/icons" % targetShare
 		targetDocs = "%s/doc/%s" % (targetShare, self.project)
 
 		os.makedirs(targetBin)
-		os.makedirs(targetPlugin)
 		os.makedirs(targetApplications)
 		os.makedirs(targetIcons)
 		os.makedirs(targetDocs)
@@ -1172,17 +1177,6 @@ class InternalCommands:
 			shutil.copy("%s/%s" % (binDir, f), targetBin)
 			target = "%s/%s" % (targetBin, f)
 			os.chmod(target, 0o0755)
-			err = os.system("strip " + target)
-			if err != 0:
-				raise Exception('strip failed: ' + str(err))
-
-		pluginDir = "%s/plugins" % binDir
-
-		pluginFiles = [ 'libns.so']
-		for f in pluginFiles:
-			shutil.copy("%s/%s" % (pluginDir, f), targetPlugin)
-			target = "%s/%s" % (targetPlugin, f)
-			os.chmod(target, 0o0644)
 			err = os.system("strip " + target)
 			if err != 0:
 				raise Exception('strip failed: ' + str(err))
@@ -1402,13 +1396,6 @@ class InternalCommands:
 		packageTarget = filename
 		ftp.upload(packageSource, packageTarget)
 
-		if type != 'src':
-			pluginsDir = binDir + '/plugins'
-			nsPluginSource = self.findLibraryFile(type, pluginsDir, 'ns')
-			if nsPluginSource:
-				nsPluginTarget = self.getLibraryDistFilename(type, pluginsDir, 'ns')
-				ftp.upload(nsPluginSource, nsPluginTarget, "plugins")
-
 	def getLibraryDistFilename(self, type, dir, name):
 		(platform, packageExt, libraryExt) = self.getDistributePlatformInfo(type)
 		firstPart = '%s-%s-%s' % (name, self.getVersionForFilename(), platform)
@@ -1515,7 +1502,7 @@ class InternalCommands:
 			'Replace [package-type] with one of:\n'
 			'  src    .tar.gz source (Posix only)\n'
 			'  rpm    .rpm package (Red Hat)\n'
-			'  deb    .deb paclage (Debian)\n'
+			'  deb    .deb package (Debian)\n'
 			'  win    .exe installer (Windows)\n'
 			'  mac    .dmg package (Mac OS X)\n'
 			'\n'
@@ -1870,7 +1857,10 @@ class InternalCommands:
 		# version is major and minor with no dots (e.g. 106)
 		version = str(major) + str(minor)
 
-		return "MacOSX%s-%s" % (version, arch)
+		if (self.macDeploy == self.macSdk):
+			return "MacOSX%s-%s" % (version, arch)
+		else:
+			return "MacOSX-%s" % arch
 
 	def reset(self):
 		if os.path.exists('build'):
@@ -1925,6 +1915,8 @@ class CommandHandler:
 				self.qtDir = a
 			elif o == '--mac-sdk':
 				self.ic.macSdk = a
+			elif o == '--mac-deploy':
+				self.ic.macDeploy = a
 			elif o == '--mac-identity':
 				self.ic.macIdentity = a
 	
